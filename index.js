@@ -7,8 +7,9 @@ import { parseStringPromise } from "xml2js";
 import { News } from "./news.model.js"
 const app = express();
 console.log("URI: ", process.env.FRONT_END_URI)
+const allowedOrigins = process.env.FRONT_END_URI.split(",")
 app.use(cors({
-    origin: process.env.FRONT_END_URI, // your frontend URL
+    origin: allowedOrigins, // your frontend URL
     credentials: true
 }))
 
