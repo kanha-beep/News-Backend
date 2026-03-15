@@ -19,7 +19,7 @@ const HINDU_HOME_RSS = "https://www.thehindu.com/feeder/default.rss";
 
 // simple in-memory cache to reduce requests
 let cache = { data: null, ts: 0 };
-const CACHE_TTL_MS =10* 60 * 1000; // 1 minute
+const CACHE_TTL_MS = 10 * 60 * 1000; // 1 minute
 async function saveNews(items) {
     for (const article of items) {
         const exists = await News.findOne({ link: article.link });
@@ -107,6 +107,21 @@ app.get("/api/hindu", async (req, res) => {
             message: err?.message
         });
     }
+});
+app.post("/api/favorite", async (req, res) => {
+    const { link } = req.body;
+
+    const news = await News.findOne({ link });
+
+    if (!news) {
+        const newNews = await News.create({ ...req.body, favorite: true });
+        return res.json(newNews);
+    }
+
+    news.favorite = !news.favorite;
+    await news.save();
+
+    res.json(news);
 });
 const getCategoryDetails = (urlStr) => {
     try {
