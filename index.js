@@ -19,7 +19,7 @@ const HINDU_HOME_RSS = "https://www.thehindu.com/feeder/default.rss";
 
 // simple in-memory cache to reduce requests
 let cache = { data: null, ts: 0 };
-const CACHE_TTL_MS = 60 * 1000; // 1 minute
+const CACHE_TTL_MS =10* 60 * 1000; // 1 minute
 async function saveNews(items) {
     for (const article of items) {
         const exists = await News.findOne({ link: article.link });
