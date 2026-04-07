@@ -10,11 +10,9 @@ const newsSchema = new mongoose.Schema({
     publishedMonthKey: { type: String, default: "" },
     category: { type: String, default: "general" },
     subCategory: { type: String, default: null },
-    tags: { type: [String], default: [] },
-    favorite: { type: Boolean, default: false }
+    tags: { type: [String], default: [] }
 }, { timestamps: true });
 
-newsSchema.index({ favorite: 1, publishedAt: -1 });
 newsSchema.index({ tags: 1 });
 newsSchema.index({ publishedDateKey: 1 });
 newsSchema.index({ publishedMonthKey: 1 });

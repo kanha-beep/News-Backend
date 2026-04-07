@@ -1,33 +1,102 @@
 import dotenv from "dotenv";
 dotenv.config();
+
 import express from "express";
 import axios from "axios";
 import cors from "cors";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+import cron from "node-cron";
+import mongoose from "mongoose";
 import { parseStringPromise } from "xml2js";
 import { News } from "./news.model.js";
-import mongoose from "mongoose";
+import { User } from "./user.model.js";
 
 const app = express();
 
-console.log("URI: ", process.env.FRONT_END_URI);
-const allowedOrigins = process.env.FRONT_END_URI.split(",");
+const allowedOrigins = (process.env.FRONT_END_URI || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+const jwtSecret = process.env.JWT_SECRET || "change-me-in-env";
+const jwtExpiresIn = "7d";
 
 app.use(cors({
-    origin: allowedOrigins,
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error("Origin not allowed by CORS"));
+    },
     credentials: true
 }));
 app.use(express.json());
 
 const HINDU_HOME_RSS = "https://www.thehindu.com/feeder/default.rss";
-
-async function db() {
-    await mongoose.connect(process.env.MONGO_URI);
-}
-
-db();
-
 let cache = { data: null, ts: 0 };
 const CACHE_TTL_MS = 10 * 60 * 1000;
+
+const sanitizeUser = (user) => ({
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    favoriteCount: Array.isArray(user.favoriteLinks) ? user.favoriteLinks.length : 0
+});
+
+const createToken = (user) => jwt.sign(
+    { sub: user._id.toString(), email: user.email },
+    jwtSecret,
+    { expiresIn: jwtExpiresIn }
+);
+
+const extractToken = (req) => {
+    const authHeader = req.headers.authorization || "";
+    if (!authHeader.startsWith("Bearer ")) {
+        return null;
+    }
+
+    return authHeader.slice(7).trim() || null;
+};
+
+const optionalAuth = async (req, _res, next) => {
+    const token = extractToken(req);
+    req.user = null;
+
+    if (!token) {
+        return next();
+    }
+
+    try {
+        const payload = jwt.verify(token, jwtSecret);
+        req.user = await User.findById(payload.sub);
+    } catch {
+        req.user = null;
+    }
+
+    return next();
+};
+
+const requireAuth = async (req, res, next) => {
+    const token = extractToken(req);
+    if (!token) {
+        return res.status(401).json({ error: "Authentication required" });
+    }
+
+    try {
+        const payload = jwt.verify(token, jwtSecret);
+        const user = await User.findById(payload.sub);
+
+        if (!user) {
+            return res.status(401).json({ error: "Invalid token" });
+        }
+
+        req.user = user;
+        return next();
+    } catch {
+        return res.status(401).json({ error: "Invalid token" });
+    }
+};
 
 const parsePublishedAt = (pubDate) => {
     const date = pubDate ? new Date(pubDate) : null;
@@ -199,8 +268,7 @@ async function syncNewsFromRss(rssUrl = HINDU_HOME_RSS) {
                             category: article.category,
                             subCategory: article.subCategory,
                             tags: article.tags
-                        },
-                        $setOnInsert: { favorite: false }
+                        }
                     },
                     upsert: true
                 }
@@ -227,15 +295,19 @@ async function syncNewsFromRss(rssUrl = HINDU_HOME_RSS) {
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const buildNewsQuery = ({ favorite, tag, date, month }) => {
+const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
     const query = {};
 
-    if (favorite === "true") {
-        query.favorite = true;
+    if (Array.isArray(favoriteLinks)) {
+        query.link = favoriteLinks.length ? { $in: favoriteLinks } : { $in: [] };
     }
 
     if (tag && tag.trim()) {
         query.tags = { $regex: escapeRegex(tag.trim().toLowerCase()), $options: "i" };
+    }
+
+    if (title && title.trim()) {
+        query.title = { $regex: escapeRegex(title.trim()), $options: "i" };
     }
 
     if (date) {
@@ -253,6 +325,108 @@ const buildNewsQuery = ({ favorite, tag, date, month }) => {
     return query;
 };
 
+const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, userFavoriteLinks }) => {
+    const normalizedPage = Math.max(1, Number.parseInt(page, 10) || 1);
+    const limit = 9;
+    const skip = (normalizedPage - 1) * limit;
+    const query = buildNewsQuery({ tag, title, date, month, favoriteLinks });
+    const favoriteSet = new Set(userFavoriteLinks || []);
+
+    const [news, total] = await Promise.all([
+        News.find(query)
+            .sort({ publishedAt: -1, createdAt: -1, _id: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        News.countDocuments(query)
+    ]);
+
+    return {
+        count: news.length,
+        total,
+        page: normalizedPage,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        items: news.map((article) => ({
+            ...article,
+            isFavorite: favoriteSet.has(article.link)
+        }))
+    };
+};
+
+app.post("/api/auth/register", async (req, res) => {
+    try {
+        const name = (req.body?.name || "").trim();
+        const email = (req.body?.email || "").trim().toLowerCase();
+        const password = req.body?.password || "";
+
+        if (!email || !password) {
+            return res.status(400).json({ error: "Email and password are required" });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({ error: "Password must be at least 6 characters" });
+        }
+
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(409).json({ error: "User already exists" });
+        }
+
+        const passwordHash = await bcrypt.hash(password, 10);
+        const user = await User.create({
+            name,
+            email,
+            passwordHash
+        });
+
+        return res.status(201).json({
+            token: createToken(user),
+            user: sanitizeUser(user)
+        });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to register",
+            message: error?.message
+        });
+    }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+    try {
+        const email = (req.body?.email || "").trim().toLowerCase();
+        const password = req.body?.password || "";
+
+        if (!email || !password) {
+            return res.status(400).json({ error: "Email and password are required" });
+        }
+
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
+
+        const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+        if (!passwordMatches) {
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
+
+        return res.status(200).json({
+            token: createToken(user),
+            user: sanitizeUser(user)
+        });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to login",
+            message: error?.message
+        });
+    }
+});
+
+app.get("/api/auth/me", requireAuth, async (req, res) => {
+    res.status(200).json({ user: sanitizeUser(req.user) });
+});
+
 app.get("/api/hindu", async (req, res) => {
     try {
         const rssUrl = req.query.rssUrl || HINDU_HOME_RSS;
@@ -266,31 +440,43 @@ app.get("/api/hindu", async (req, res) => {
     }
 });
 
-app.get("/api/news", async (req, res) => {
+app.get("/api/news", optionalAuth, async (req, res) => {
     try {
-        const { favorite, tag, date, month } = req.query;
-        const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
-        const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 9));
-        const skip = (page - 1) * limit;
-        const query = buildNewsQuery({ favorite, tag, date, month });
-
-        const [news, total] = await Promise.all([
-            News.find(query)
-            .sort({ publishedAt: -1, createdAt: -1, _id: -1 })
-            .skip(skip)
-            .limit(limit)
-            .lean(),
-            News.countDocuments(query)
-        ]);
-
-        res.status(200).json({
-            count: news.length,
-            total,
-            page,
-            limit,
-            totalPages: Math.max(1, Math.ceil(total / limit)),
-            items: news
+        const { tag, title, date, month } = req.query;
+        const favoritesOnly = req.query.favoritesOnly === "true";
+        const payload = await getPaginatedNews({
+            tag,
+            title,
+            date,
+            month,
+            page: req.query.page,
+            favoriteLinks: favoritesOnly ? (req.user?.favoriteLinks || []) : undefined,
+            userFavoriteLinks: req.user?.favoriteLinks || []
         });
+
+        res.status(200).json(payload);
+    } catch (error) {
+        res.status(500).json({
+            error: "Failed to load news",
+            message: error?.message
+        });
+    }
+});
+
+app.post("/api/news/filter", optionalAuth, async (req, res) => {
+    try {
+        const { tag, title, date, month, page, favoritesOnly } = req.body || {};
+        const payload = await getPaginatedNews({
+            tag,
+            title,
+            date,
+            month,
+            page,
+            favoriteLinks: favoritesOnly ? (req.user?.favoriteLinks || []) : undefined,
+            userFavoriteLinks: req.user?.favoriteLinks || []
+        });
+
+        res.status(200).json(payload);
     } catch (error) {
         res.status(500).json({
             error: "Failed to load news",
@@ -313,24 +499,67 @@ app.get("/api/tags", async (_req, res) => {
     }
 });
 
-app.post("/api/favorite", async (req, res) => {
-    const { link } = req.body;
-    if (!link) {
-        return res.status(400).json({ error: "Link is required" });
-    }
+app.post("/api/favorites/toggle", requireAuth, async (req, res) => {
+    try {
+        const { link } = req.body || {};
 
-    const news = await News.findOne({ link });
-    if (!news) {
-        const payload = normalizeFeedItem(req.body);
-        const newNews = await News.create({ ...payload, favorite: true });
-        cache = { data: null, ts: 0 };
-        return res.json(newNews);
-    }
+        if (!link) {
+            return res.status(400).json({ error: "Link is required" });
+        }
 
-    news.favorite = !news.favorite;
-    await news.save();
-    cache = { data: null, ts: 0 };
-    res.status(200).json(news);
+        let news = await News.findOne({ link });
+        if (!news) {
+            const payload = normalizeFeedItem(req.body);
+            news = await News.create(payload);
+            cache = { data: null, ts: 0 };
+        }
+
+        const alreadyFavorite = req.user.favoriteLinks.includes(link);
+        req.user.favoriteLinks = alreadyFavorite
+            ? req.user.favoriteLinks.filter((favoriteLink) => favoriteLink !== link)
+            : [...req.user.favoriteLinks, link];
+
+        await req.user.save();
+
+        return res.status(200).json({
+            favorite: !alreadyFavorite,
+            user: sanitizeUser(req.user)
+        });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to update favorite",
+            message: error?.message
+        });
+    }
 });
 
-app.listen(process.env.PORT, () => console.log("API running on http://localhost:3000"));
+const connectDb = async () => {
+    await mongoose.connect(process.env.MONGO_URI);
+};
+
+const startBackgroundSync = () => {
+    cron.schedule("*/10 * * * *", async () => {
+        try {
+            await syncNewsFromRss();
+        } catch (error) {
+            console.error("Scheduled news sync failed:", error?.message || error);
+        }
+    });
+};
+
+const startServer = async () => {
+    try {
+        await connectDb();
+        await syncNewsFromRss();
+        startBackgroundSync();
+
+        app.listen(process.env.PORT, () => {
+            console.log(`API running on http://localhost:${process.env.PORT}`);
+        });
+    } catch (error) {
+        console.error("Failed to start server:", error?.message || error);
+        process.exit(1);
+    }
+};
+
+startServer();
