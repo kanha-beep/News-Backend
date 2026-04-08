@@ -1,6 +1,10 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import axios from "axios";
 import cors from "cors";
@@ -13,6 +17,9 @@ import { News } from "./news.model.js";
 import { User } from "./user.model.js";
 
 const app = express();
+const execFileAsync = promisify(execFile);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const allowedOrigins = (process.env.FRONT_END_URI || "")
     .split(",")
@@ -36,6 +43,8 @@ app.use(express.json());
 const HINDU_HOME_RSS = "https://www.thehindu.com/feeder/default.rss";
 let cache = { data: null, ts: 0 };
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const rustRssFetcherManifestPath = join(__dirname, "rss-fetcher", "Cargo.toml");
+const rustRssFetcherBinaryPath = (process.env.RUST_RSS_FETCHER_BIN || "").trim();
 
 const sanitizeUser = (user) => ({
     id: user._id,
@@ -226,11 +235,31 @@ const normalizeFeedItem = (item) => {
     return normalized;
 };
 
-async function syncNewsFromRss(rssUrl = HINDU_HOME_RSS) {
-    if (cache.data && Date.now() - cache.ts < CACHE_TTL_MS && rssUrl === HINDU_HOME_RSS) {
-        return cache.data;
+const runRustRssFetcher = async (rssUrl) => {
+    const command = rustRssFetcherBinaryPath || "cargo";
+    const args = rustRssFetcherBinaryPath
+        ? [rssUrl]
+        : ["run", "--quiet", "--manifest-path", rustRssFetcherManifestPath, "--", rssUrl];
+
+    const { stdout, stderr } = await execFileAsync(command, args, {
+        cwd: __dirname,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024 * 20
+    });
+
+    const payload = stdout.trim();
+    if (!payload) {
+        throw new Error(stderr?.trim() || "Rust RSS fetcher returned empty output.");
     }
 
+    try {
+        return JSON.parse(payload);
+    } catch (error) {
+        throw new Error(`Rust RSS fetcher returned invalid JSON: ${error.message}`);
+    }
+};
+
+const runNodeRssFetcher = async (rssUrl) => {
     const response = await axios.get(rssUrl, {
         timeout: 10000,
         headers: {
@@ -244,9 +273,39 @@ async function syncNewsFromRss(rssUrl = HINDU_HOME_RSS) {
         trim: true
     });
 
-    const channel = parsed?.rss?.channel;
+    const channel = parsed?.rss?.channel || {};
     let items = channel?.item || [];
-    if (!Array.isArray(items)) items = [items];
+
+    if (!Array.isArray(items)) {
+        items = items ? [items] : [];
+    }
+
+    return {
+        channel: {
+            title: channel?.title,
+            link: channel?.link,
+            lastBuildDate: channel?.lastBuildDate
+        },
+        items
+    };
+};
+
+async function syncNewsFromRss(rssUrl = HINDU_HOME_RSS) {
+    if (cache.data && Date.now() - cache.ts < CACHE_TTL_MS && rssUrl === HINDU_HOME_RSS) {
+        return cache.data;
+    }
+
+    let fetchedFeed;
+
+    try {
+        fetchedFeed = await runRustRssFetcher(rssUrl);
+    } catch (error) {
+        console.warn("Rust RSS fetcher failed, falling back to Node fetcher:", error?.message || error);
+        fetchedFeed = await runNodeRssFetcher(rssUrl);
+    }
+
+    const channel = fetchedFeed?.channel || {};
+    const items = Array.isArray(fetchedFeed?.items) ? fetchedFeed.items : [];
 
     const normalizedItems = items
         .filter((item) => item?.link)
