@@ -8,10 +8,12 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import axios from "axios";
 import cors from "cors";
+import helmet from "helmet";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import cron from "node-cron";
 import mongoose from "mongoose";
+import rateLimit from "express-rate-limit";
 import { parseStringPromise } from "xml2js";
 import { News } from "./news.model.js";
 import { User } from "./user.model.js";
@@ -27,6 +29,26 @@ const allowedOrigins = (process.env.FRONT_END_URI || "")
     .filter(Boolean);
 const jwtSecret = process.env.JWT_SECRET || "change-me-in-env";
 const jwtExpiresIn = "7d";
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        error: "Too many requests",
+        message: "Please try again in a few minutes."
+    }
+});
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        error: "Too many authentication attempts",
+        message: "Please wait a few minutes before trying again."
+    }
+});
 
 app.use(cors({
     origin(origin, callback) {
@@ -38,7 +60,12 @@ app.use(cors({
     },
     credentials: true
 }));
+app.use(helmet({
+    crossOriginResourcePolicy: false
+}));
 app.use(express.json());
+app.use("/api", apiLimiter);
+app.use("/api/auth", authLimiter);
 
 const HINDU_HOME_RSS = "https://www.thehindu.com/feeder/default.rss";
 let cache = { data: null, ts: 0 };
