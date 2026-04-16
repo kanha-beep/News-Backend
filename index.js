@@ -10,9 +10,11 @@ import axios from "axios";
 import cors from "cors";
 import helmet from "helmet";
 import bcrypt from "bcrypt";
+import hpp from "hpp";
 import jwt from "jsonwebtoken";
 import cron from "node-cron";
 import mongoose from "mongoose";
+import mongoSanitize from "express-mongo-sanitize";
 import rateLimit from "express-rate-limit";
 import { parseStringPromise } from "xml2js";
 import { News } from "./news.model.js";
@@ -34,6 +36,7 @@ const apiLimiter = rateLimit({
     limit: 300,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.method === "OPTIONS",
     message: {
         error: "Too many requests",
         message: "Please try again in a few minutes."
@@ -44,12 +47,14 @@ const authLimiter = rateLimit({
     limit: 20,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.method === "OPTIONS",
     message: {
         error: "Too many authentication attempts",
         message: "Please wait a few minutes before trying again."
     }
 });
 
+app.disable("x-powered-by");
 app.use(cors({
     origin(origin, callback) {
         if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
@@ -63,7 +68,12 @@ app.use(cors({
 app.use(helmet({
     crossOriginResourcePolicy: false
 }));
-app.use(express.json());
+app.use(express.json({ limit: "100kb" }));
+app.use(express.urlencoded({ extended: true, limit: "100kb" }));
+app.use(mongoSanitize({
+    replaceWith: "_"
+}));
+app.use(hpp());
 app.use("/api", apiLimiter);
 app.use("/api/auth", authLimiter);
 
