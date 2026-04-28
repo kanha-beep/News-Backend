@@ -17,6 +17,7 @@ import mongoose from "mongoose";
 import mongoSanitize from "express-mongo-sanitize";
 import rateLimit from "express-rate-limit";
 import { parseStringPromise } from "xml2js";
+import { Blog } from "./blog.model.js";
 import { News } from "./news.model.js";
 import { User } from "./user.model.js";
 
@@ -80,6 +81,9 @@ app.use("/api/auth", authLimiter);
 const HINDU_HOME_RSS = "https://www.thehindu.com/feeder/default.rss";
 let cache = { data: null, ts: 0 };
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const BLOG_PLATFORM_URL = (
+    process.env.BLOG_FRONT_END_URI || "https://blogs-frontend-omega.vercel.app"
+).replace(/\/+$/, "");
 const rustRssFetcherManifestPath = join(__dirname, "rss-fetcher", "Cargo.toml");
 const rustRssFetcherBinaryPath = (process.env.RUST_RSS_FETCHER_BIN || "").trim();
 
@@ -390,6 +394,51 @@ async function syncNewsFromRss(rssUrl = HINDU_HOME_RSS) {
 }
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const normalizeTitleKey = (value) => value.trim().toLowerCase().replace(/\s+/g, " ");
+
+const attachMatchingBlogs = async (articles) => {
+    if (!articles.length) {
+        return articles;
+    }
+
+    const articleLinks = articles.map((article) => article.link).filter(Boolean);
+    const articleTitles = articles
+        .map((article) => article.title?.trim())
+        .filter(Boolean);
+    const blogCandidates = await Blog.find({
+        $or: [
+            articleLinks.length ? { url: { $in: articleLinks } } : null,
+            articleTitles.length ? { title: { $in: articleTitles } } : null
+        ].filter(Boolean)
+    })
+        .select({ _id: 1, title: 1, url: 1 })
+        .lean();
+
+    const blogByUrl = new Map();
+    const blogByTitle = new Map();
+
+    for (const blog of blogCandidates) {
+        if (blog.url) {
+            blogByUrl.set(blog.url, blog);
+        }
+
+        if (blog.title) {
+            blogByTitle.set(normalizeTitleKey(blog.title), blog);
+        }
+    }
+
+    return articles.map((article) => {
+        const matchedBlog =
+            blogByUrl.get(article.link) ||
+            (article.title ? blogByTitle.get(normalizeTitleKey(article.title)) : null);
+
+        return {
+            ...article,
+            blogId: matchedBlog?._id?.toString() || null,
+            blogUrl: matchedBlog ? `${BLOG_PLATFORM_URL}/${matchedBlog._id}` : ""
+        };
+    });
+};
 
 const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
     const query = {};
@@ -436,6 +485,7 @@ const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, 
             .lean(),
         News.countDocuments(query)
     ]);
+    const itemsWithBlogs = await attachMatchingBlogs(news);
 
     return {
         count: news.length,
@@ -443,7 +493,7 @@ const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, 
         page: normalizedPage,
         limit,
         totalPages: Math.max(1, Math.ceil(total / limit)),
-        items: news.map((article) => ({
+        items: itemsWithBlogs.map((article) => ({
             ...article,
             isFavorite: favoriteSet.has(article.link)
         }))
