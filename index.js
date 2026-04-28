@@ -71,9 +71,29 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: "100kb" }));
 app.use(express.urlencoded({ extended: true, limit: "100kb" }));
-app.use(mongoSanitize({
-    replaceWith: "_"
-}));
+app.use((req, _res, next) => {
+    const sanitizeOptions = {
+        replaceWith: "_"
+    };
+
+    if (req.body) {
+        mongoSanitize.sanitize(req.body, sanitizeOptions);
+    }
+
+    if (req.params) {
+        mongoSanitize.sanitize(req.params, sanitizeOptions);
+    }
+
+    if (req.headers) {
+        mongoSanitize.sanitize(req.headers, sanitizeOptions);
+    }
+
+    if (req.query) {
+        mongoSanitize.sanitize(req.query, sanitizeOptions);
+    }
+
+    next();
+});
 app.use(hpp());
 app.use("/api", apiLimiter);
 app.use("/api/auth", authLimiter);
@@ -408,18 +428,24 @@ const attachMatchingBlogs = async (articles) => {
     const blogCandidates = await Blog.find({
         $or: [
             articleLinks.length ? { url: { $in: articleLinks } } : null,
+            articleLinks.length ? { sourceUrl: { $in: articleLinks } } : null,
             articleTitles.length ? { title: { $in: articleTitles } } : null
         ].filter(Boolean)
     })
-        .select({ _id: 1, title: 1, url: 1 })
+        .select({ _id: 1, title: 1, url: 1, sourceUrl: 1 })
         .lean();
 
     const blogByUrl = new Map();
+    const blogBySourceUrl = new Map();
     const blogByTitle = new Map();
 
     for (const blog of blogCandidates) {
         if (blog.url) {
             blogByUrl.set(blog.url, blog);
+        }
+
+        if (blog.sourceUrl) {
+            blogBySourceUrl.set(blog.sourceUrl, blog);
         }
 
         if (blog.title) {
@@ -429,6 +455,7 @@ const attachMatchingBlogs = async (articles) => {
 
     return articles.map((article) => {
         const matchedBlog =
+            blogBySourceUrl.get(article.link) ||
             blogByUrl.get(article.link) ||
             (article.title ? blogByTitle.get(normalizeTitleKey(article.title)) : null);
 
