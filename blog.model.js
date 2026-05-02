@@ -47,4 +47,8 @@ const blogSchema = new mongoose.Schema(
   },
 );
 
-export const Blog = mongoose.models.Blog || mongoose.model("Blog", blogSchema);
+export const getBlogModel = (connection = mongoose) => (
+    connection.models.ExternalBlog || connection.model("ExternalBlog", blogSchema)
+);
+
+export const Blog = getBlogModel(mongoose);

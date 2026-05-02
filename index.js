@@ -17,7 +17,7 @@ import mongoose from "mongoose";
 import mongoSanitize from "express-mongo-sanitize";
 import rateLimit from "express-rate-limit";
 import { parseStringPromise } from "xml2js";
-import { Blog } from "./blog.model.js";
+import { Blog, getBlogModel } from "./blog.model.js";
 import { News } from "./news.model.js";
 import { User } from "./user.model.js";
 
@@ -106,6 +106,8 @@ const BLOG_PLATFORM_URL = (
 ).replace(/\/+$/, "");
 const rustRssFetcherManifestPath = join(__dirname, "rss-fetcher", "Cargo.toml");
 const rustRssFetcherBinaryPath = (process.env.RUST_RSS_FETCHER_BIN || "").trim();
+let blogsConnection = null;
+let externalBlogModel = Blog;
 
 const sanitizeUser = (user) => ({
     id: user._id,
@@ -416,6 +418,20 @@ async function syncNewsFromRss(rssUrl = HINDU_HOME_RSS) {
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const normalizeTitleKey = (value) => value.trim().toLowerCase().replace(/\s+/g, " ");
 
+const buildMongoUriForDatabase = (mongoUri, databaseName) => {
+    if (!mongoUri || !databaseName) {
+        return "";
+    }
+
+    try {
+        const parsed = new URL(mongoUri);
+        parsed.pathname = `/${databaseName}`;
+        return parsed.toString();
+    } catch {
+        return mongoUri.replace(/\/([^/?]+)(\?.*)?$/, `/${databaseName}$2`);
+    }
+};
+
 const attachMatchingBlogs = async (articles) => {
     if (!articles.length) {
         return articles;
@@ -425,7 +441,7 @@ const attachMatchingBlogs = async (articles) => {
     const articleTitles = articles
         .map((article) => article.title?.trim())
         .filter(Boolean);
-    const blogCandidates = await Blog.find({
+    const blogCandidates = await externalBlogModel.find({
         $or: [
             articleLinks.length ? { url: { $in: articleLinks } } : null,
             articleLinks.length ? { sourceUrl: { $in: articleLinks } } : null,
@@ -710,6 +726,28 @@ const connectDb = async () => {
     await mongoose.connect(process.env.MONGO_URI);
 };
 
+const connectBlogsDb = async () => {
+    const explicitBlogsUri = (process.env.BLOGS_MONGO_URI || "").trim();
+    const blogsUri = explicitBlogsUri || buildMongoUriForDatabase(process.env.MONGO_URI, "blogs");
+
+    if (!blogsUri) {
+        externalBlogModel = Blog;
+        return;
+    }
+
+    if (blogsUri === process.env.MONGO_URI) {
+        externalBlogModel = Blog;
+        return;
+    }
+
+    blogsConnection = mongoose.createConnection(blogsUri, {
+        serverSelectionTimeoutMS: 10000
+    });
+
+    await blogsConnection.asPromise();
+    externalBlogModel = getBlogModel(blogsConnection);
+};
+
 const startBackgroundSync = () => {
     cron.schedule("*/10 * * * *", async () => {
         try {
@@ -723,6 +761,7 @@ const startBackgroundSync = () => {
 const startServer = async () => {
     try {
         await connectDb();
+        await connectBlogsDb();
         await syncNewsFromRss();
         startBackgroundSync();
 
