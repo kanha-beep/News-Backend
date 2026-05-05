@@ -18,6 +18,7 @@ import mongoSanitize from "express-mongo-sanitize";
 import rateLimit from "express-rate-limit";
 import { parseStringPromise } from "xml2js";
 import { Blog, getBlogModel } from "./blog.model.js";
+import { Comment } from "./comment.model.js";
 import { News } from "./news.model.js";
 import { User } from "./user.model.js";
 
@@ -543,6 +544,27 @@ const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, 
     };
 };
 
+const getArticleByLink = async ({ link, userFavoriteLinks }) => {
+    const normalizedLink = (link || "").trim();
+
+    if (!normalizedLink) {
+        return null;
+    }
+
+    const article = await News.findOne({ link: normalizedLink }).lean();
+    if (!article) {
+        return null;
+    }
+
+    const [articleWithBlog] = await attachMatchingBlogs([article]);
+    const favoriteSet = new Set(userFavoriteLinks || []);
+
+    return {
+        ...articleWithBlog,
+        isFavorite: favoriteSet.has(article.link)
+    };
+};
+
 app.post("/api/auth/register", async (req, res) => {
     try {
         const name = (req.body?.name || "").trim();
@@ -652,6 +674,26 @@ app.get("/api/news", optionalAuth, async (req, res) => {
     }
 });
 
+app.get("/api/news/article", optionalAuth, async (req, res) => {
+    try {
+        const article = await getArticleByLink({
+            link: req.query.link,
+            userFavoriteLinks: req.user?.favoriteLinks || []
+        });
+
+        if (!article) {
+            return res.status(404).json({ error: "Article not found" });
+        }
+
+        return res.status(200).json({ item: article });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to load article",
+            message: error?.message
+        });
+    }
+});
+
 app.post("/api/news/filter", optionalAuth, async (req, res) => {
     try {
         const { tag, title, date, month, page, favoritesOnly } = req.body || {};
@@ -669,6 +711,75 @@ app.post("/api/news/filter", optionalAuth, async (req, res) => {
     } catch (error) {
         res.status(500).json({
             error: "Failed to load news",
+            message: error?.message
+        });
+    }
+});
+
+app.get("/api/comments", async (req, res) => {
+    try {
+        const newsLink = (req.query.link || "").trim();
+
+        if (!newsLink) {
+            return res.status(400).json({ error: "Article link is required" });
+        }
+
+        const comments = await Comment.find({ newsLink })
+            .sort({ createdAt: -1, _id: -1 })
+            .limit(100)
+            .lean();
+
+        return res.status(200).json({
+            items: comments.map((comment) => ({
+                id: comment._id.toString(),
+                content: comment.content,
+                userName: comment.userName,
+                createdAt: comment.createdAt
+            }))
+        });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to load comments",
+            message: error?.message
+        });
+    }
+});
+
+app.post("/api/comments", requireAuth, async (req, res) => {
+    try {
+        const newsLink = (req.body?.link || "").trim();
+        const content = (req.body?.content || "").trim();
+
+        if (!newsLink) {
+            return res.status(400).json({ error: "Article link is required" });
+        }
+
+        if (!content) {
+            return res.status(400).json({ error: "Comment cannot be empty" });
+        }
+
+        if (content.length > 500) {
+            return res.status(400).json({ error: "Comment must be 500 characters or fewer" });
+        }
+
+        const comment = await Comment.create({
+            newsLink,
+            content,
+            user: req.user._id,
+            userName: req.user.name || req.user.email
+        });
+
+        return res.status(201).json({
+            item: {
+                id: comment._id.toString(),
+                content: comment.content,
+                userName: comment.userName,
+                createdAt: comment.createdAt
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to add comment",
             message: error?.message
         });
     }
