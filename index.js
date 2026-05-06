@@ -484,6 +484,35 @@ const attachMatchingBlogs = async (articles) => {
     });
 };
 
+const attachEngagementCounts = async (articles) => {
+    if (!articles.length) {
+        return articles;
+    }
+
+    const articleLinks = [...new Set(articles.map((article) => article.link).filter(Boolean))];
+    const [likeCounts, commentCounts] = await Promise.all([
+        User.aggregate([
+            { $match: { favoriteLinks: { $in: articleLinks } } },
+            { $unwind: "$favoriteLinks" },
+            { $match: { favoriteLinks: { $in: articleLinks } } },
+            { $group: { _id: "$favoriteLinks", count: { $sum: 1 } } }
+        ]),
+        Comment.aggregate([
+            { $match: { newsLink: { $in: articleLinks } } },
+            { $group: { _id: "$newsLink", count: { $sum: 1 } } }
+        ])
+    ]);
+
+    const likeCountMap = new Map(likeCounts.map((item) => [item._id, item.count]));
+    const commentCountMap = new Map(commentCounts.map((item) => [item._id, item.count]));
+
+    return articles.map((article) => ({
+        ...article,
+        likeCount: likeCountMap.get(article.link) || 0,
+        commentCount: commentCountMap.get(article.link) || 0
+    }));
+};
+
 const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
     const query = {};
 
@@ -530,6 +559,7 @@ const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, 
         News.countDocuments(query)
     ]);
     const itemsWithBlogs = await attachMatchingBlogs(news);
+    const itemsWithEngagement = await attachEngagementCounts(itemsWithBlogs);
 
     return {
         count: news.length,
@@ -537,7 +567,7 @@ const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, 
         page: normalizedPage,
         limit,
         totalPages: Math.max(1, Math.ceil(total / limit)),
-        items: itemsWithBlogs.map((article) => ({
+        items: itemsWithEngagement.map((article) => ({
             ...article,
             isFavorite: favoriteSet.has(article.link)
         }))
@@ -557,10 +587,11 @@ const getArticleByLink = async ({ link, userFavoriteLinks }) => {
     }
 
     const [articleWithBlog] = await attachMatchingBlogs([article]);
+    const [articleWithEngagement] = await attachEngagementCounts([articleWithBlog]);
     const favoriteSet = new Set(userFavoriteLinks || []);
 
     return {
-        ...articleWithBlog,
+        ...articleWithEngagement,
         isFavorite: favoriteSet.has(article.link)
     };
 };
