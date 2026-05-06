@@ -21,6 +21,7 @@ import { Blog, getBlogModel } from "./blog.model.js";
 import { Comment } from "./comment.model.js";
 import { News } from "./news.model.js";
 import { User } from "./user.model.js";
+import { Visit } from "./visit.model.js";
 
 const app = express();
 const execFileAsync = promisify(execFile);
@@ -117,6 +118,47 @@ const sanitizeUser = (user) => ({
     favoriteCount: Array.isArray(user.favoriteLinks) ? user.favoriteLinks.length : 0,
     likedCount: Array.isArray(user.likedLinks) ? user.likedLinks.length : 0
 });
+
+const getClientIp = (req) => {
+    const forwardedFor = req.headers["x-forwarded-for"];
+    if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+        return forwardedFor.split(",")[0].trim();
+    }
+
+    const realIp = req.headers["x-real-ip"];
+    if (typeof realIp === "string" && realIp.trim()) {
+        return realIp.trim();
+    }
+
+    return req.ip || req.socket?.remoteAddress || "";
+};
+
+const inferBrowser = (userAgent = "") => {
+    const value = userAgent.toLowerCase();
+    if (value.includes("edg/")) return "Edge";
+    if (value.includes("chrome/")) return "Chrome";
+    if (value.includes("safari/") && !value.includes("chrome/")) return "Safari";
+    if (value.includes("firefox/")) return "Firefox";
+    if (value.includes("opr/") || value.includes("opera/")) return "Opera";
+    return "Unknown";
+};
+
+const inferOs = (userAgent = "") => {
+    const value = userAgent.toLowerCase();
+    if (value.includes("windows")) return "Windows";
+    if (value.includes("android")) return "Android";
+    if (value.includes("iphone") || value.includes("ipad") || value.includes("ios")) return "iOS";
+    if (value.includes("mac os")) return "macOS";
+    if (value.includes("linux")) return "Linux";
+    return "Unknown";
+};
+
+const inferDeviceType = (userAgent = "") => {
+    const value = userAgent.toLowerCase();
+    if (value.includes("mobile")) return "Mobile";
+    if (value.includes("tablet") || value.includes("ipad")) return "Tablet";
+    return "Desktop";
+};
 
 const createToken = (user) => jwt.sign(
     { sub: user._id.toString(), email: user.email },
@@ -833,6 +875,44 @@ app.get("/api/tags", async (_req, res) => {
     } catch (error) {
         res.status(500).json({
             error: "Failed to load tags",
+            message: error?.message
+        });
+    }
+});
+
+app.post("/api/analytics/visit", async (req, res) => {
+    try {
+        const userAgent = req.headers["user-agent"] || "";
+        const pageUrl = (req.body?.pageUrl || "").trim();
+        const path = (req.body?.path || "").trim();
+        const title = (req.body?.title || "").trim();
+        const referrer = (req.body?.referrer || "").trim();
+        const screen = (req.body?.screen || "").trim();
+        const timezone = (req.body?.timezone || "").trim();
+        const language = (req.body?.language || "").trim();
+
+        await Visit.create({
+            pageUrl,
+            path,
+            title,
+            referrer,
+            ipAddress: getClientIp(req),
+            userAgent,
+            browser: inferBrowser(userAgent),
+            deviceType: inferDeviceType(userAgent),
+            os: inferOs(userAgent),
+            screen,
+            timezone,
+            language,
+            country: (req.headers["x-vercel-ip-country"] || req.headers["cf-ipcountry"] || "").toString(),
+            region: (req.headers["x-vercel-ip-country-region"] || req.headers["x-appengine-region"] || "").toString(),
+            city: (req.headers["x-vercel-ip-city"] || "").toString()
+        });
+
+        return res.status(201).json({ ok: true });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to record visit",
             message: error?.message
         });
     }
