@@ -114,7 +114,8 @@ const sanitizeUser = (user) => ({
     id: user._id,
     name: user.name,
     email: user.email,
-    favoriteCount: Array.isArray(user.favoriteLinks) ? user.favoriteLinks.length : 0
+    favoriteCount: Array.isArray(user.favoriteLinks) ? user.favoriteLinks.length : 0,
+    likedCount: Array.isArray(user.likedLinks) ? user.likedLinks.length : 0
 });
 
 const createToken = (user) => jwt.sign(
@@ -492,10 +493,10 @@ const attachEngagementCounts = async (articles) => {
     const articleLinks = [...new Set(articles.map((article) => article.link).filter(Boolean))];
     const [likeCounts, commentCounts] = await Promise.all([
         User.aggregate([
-            { $match: { favoriteLinks: { $in: articleLinks } } },
-            { $unwind: "$favoriteLinks" },
-            { $match: { favoriteLinks: { $in: articleLinks } } },
-            { $group: { _id: "$favoriteLinks", count: { $sum: 1 } } }
+            { $match: { likedLinks: { $in: articleLinks } } },
+            { $unwind: "$likedLinks" },
+            { $match: { likedLinks: { $in: articleLinks } } },
+            { $group: { _id: "$likedLinks", count: { $sum: 1 } } }
         ]),
         Comment.aggregate([
             { $match: { newsLink: { $in: articleLinks } } },
@@ -543,12 +544,13 @@ const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
     return query;
 };
 
-const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, userFavoriteLinks }) => {
+const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, userFavoriteLinks, userLikedLinks }) => {
     const normalizedPage = Math.max(1, Number.parseInt(page, 10) || 1);
     const limit = 9;
     const skip = (normalizedPage - 1) * limit;
     const query = buildNewsQuery({ tag, title, date, month, favoriteLinks });
     const favoriteSet = new Set(userFavoriteLinks || []);
+    const likedSet = new Set(userLikedLinks || []);
 
     const [news, total] = await Promise.all([
         News.find(query)
@@ -569,12 +571,13 @@ const getPaginatedNews = async ({ tag, title, date, month, page, favoriteLinks, 
         totalPages: Math.max(1, Math.ceil(total / limit)),
         items: itemsWithEngagement.map((article) => ({
             ...article,
-            isFavorite: favoriteSet.has(article.link)
+            isFavorite: favoriteSet.has(article.link),
+            isLiked: likedSet.has(article.link)
         }))
     };
 };
 
-const getArticleByLink = async ({ link, userFavoriteLinks }) => {
+const getArticleByLink = async ({ link, userFavoriteLinks, userLikedLinks }) => {
     const normalizedLink = (link || "").trim();
 
     if (!normalizedLink) {
@@ -589,10 +592,12 @@ const getArticleByLink = async ({ link, userFavoriteLinks }) => {
     const [articleWithBlog] = await attachMatchingBlogs([article]);
     const [articleWithEngagement] = await attachEngagementCounts([articleWithBlog]);
     const favoriteSet = new Set(userFavoriteLinks || []);
+    const likedSet = new Set(userLikedLinks || []);
 
     return {
         ...articleWithEngagement,
-        isFavorite: favoriteSet.has(article.link)
+        isFavorite: favoriteSet.has(article.link),
+        isLiked: likedSet.has(article.link)
     };
 };
 
@@ -693,7 +698,8 @@ app.get("/api/news", optionalAuth, async (req, res) => {
             month,
             page: req.query.page,
             favoriteLinks: favoritesOnly ? (req.user?.favoriteLinks || []) : undefined,
-            userFavoriteLinks: req.user?.favoriteLinks || []
+            userFavoriteLinks: req.user?.favoriteLinks || [],
+            userLikedLinks: req.user?.likedLinks || []
         });
 
         res.status(200).json(payload);
@@ -709,7 +715,8 @@ app.get("/api/news/article", optionalAuth, async (req, res) => {
     try {
         const article = await getArticleByLink({
             link: req.query.link,
-            userFavoriteLinks: req.user?.favoriteLinks || []
+            userFavoriteLinks: req.user?.favoriteLinks || [],
+            userLikedLinks: req.user?.likedLinks || []
         });
 
         if (!article) {
@@ -735,7 +742,8 @@ app.post("/api/news/filter", optionalAuth, async (req, res) => {
             month,
             page,
             favoriteLinks: favoritesOnly ? (req.user?.favoriteLinks || []) : undefined,
-            userFavoriteLinks: req.user?.favoriteLinks || []
+            userFavoriteLinks: req.user?.favoriteLinks || [],
+            userLikedLinks: req.user?.likedLinks || []
         });
 
         res.status(200).json(payload);
@@ -845,12 +853,17 @@ app.post("/api/favorites/toggle", requireAuth, async (req, res) => {
             cache = { data: null, ts: 0 };
         }
 
-        const alreadyFavorite = req.user.favoriteLinks.includes(link);
-        req.user.favoriteLinks = alreadyFavorite
-            ? req.user.favoriteLinks.filter((favoriteLink) => favoriteLink !== link)
-            : [...req.user.favoriteLinks, link];
+        const favoriteLinks = Array.isArray(req.user.favoriteLinks) ? req.user.favoriteLinks : [];
+        const alreadyFavorite = favoriteLinks.includes(link);
+        const updatedUser = await User.findByIdAndUpdate(
+            req.user._id,
+            alreadyFavorite
+                ? { $pull: { favoriteLinks: link } }
+                : { $addToSet: { favoriteLinks: link } },
+            { new: true }
+        );
 
-        await req.user.save();
+        req.user = updatedUser;
 
         return res.status(200).json({
             favorite: !alreadyFavorite,
@@ -859,6 +872,45 @@ app.post("/api/favorites/toggle", requireAuth, async (req, res) => {
     } catch (error) {
         return res.status(500).json({
             error: "Failed to update favorite",
+            message: error?.message
+        });
+    }
+});
+
+app.post("/api/likes/toggle", requireAuth, async (req, res) => {
+    try {
+        const { link } = req.body || {};
+
+        if (!link) {
+            return res.status(400).json({ error: "Link is required" });
+        }
+
+        let news = await News.findOne({ link });
+        if (!news) {
+            const payload = normalizeFeedItem(req.body);
+            news = await News.create(payload);
+            cache = { data: null, ts: 0 };
+        }
+
+        const likedLinks = Array.isArray(req.user.likedLinks) ? req.user.likedLinks : [];
+        const alreadyLiked = likedLinks.includes(link);
+        const updatedUser = await User.findByIdAndUpdate(
+            req.user._id,
+            alreadyLiked
+                ? { $pull: { likedLinks: link } }
+                : { $addToSet: { likedLinks: link } },
+            { new: true }
+        );
+
+        req.user = updatedUser;
+
+        return res.status(200).json({
+            liked: !alreadyLiked,
+            user: sanitizeUser(req.user)
+        });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Failed to update like",
             message: error?.message
         });
     }

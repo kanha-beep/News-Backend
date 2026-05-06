@@ -4,7 +4,8 @@ const userSchema = new mongoose.Schema({
     name: { type: String, trim: true, default: "" },
     email: { type: String, required: true, unique: true, trim: true, lowercase: true },
     passwordHash: { type: String, required: true },
-    favoriteLinks: { type: [String], default: [] }
+    favoriteLinks: { type: [String], default: [] },
+    likedLinks: { type: [String], default: [] }
 }, { timestamps: true });
 
 userSchema.index({ email: 1 }, { unique: true });
