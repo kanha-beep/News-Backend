@@ -104,7 +104,7 @@ const HINDU_HOME_RSS = "https://www.thehindu.com/feeder/default.rss";
 let cache = { data: null, ts: 0 };
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const BLOG_PLATFORM_URL = (
-    process.env.BLOG_FRONT_END_URI || "https://blogs-frontend-omega.vercel.app"
+    process.env.BLOG_FRONT_END_URI || "https://lightningnews.vercel.app"
 ).replace(/\/+$/, "");
 const rustRssFetcherManifestPath = join(__dirname, "rss-fetcher", "Cargo.toml");
 const rustRssFetcherBinaryPath = (process.env.RUST_RSS_FETCHER_BIN || "").trim();
