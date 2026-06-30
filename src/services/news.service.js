@@ -15,6 +15,7 @@ import {
   buildNeutralSummary,
   clusterArticles,
   escapeRegex,
+  inferFallbackTags,
   normalizeFeedItem,
   normalizeTitleKey,
   scoreSemanticMatch,
@@ -306,12 +307,20 @@ const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
   return query;
 };
 
-const decorateArticle = (article, favoriteSet, likedSet, dislikedSet) => ({
-  ...article,
-  isFavorite: favoriteSet.has(article.link),
-  isLiked: likedSet.has(article.link),
-  isDisliked: dislikedSet.has(article.link),
-});
+const decorateArticle = (article, favoriteSet, likedSet, dislikedSet) => {
+  const tags =
+    Array.isArray(article.tags) && article.tags.length > 0
+      ? article.tags
+      : inferFallbackTags(article);
+
+  return {
+    ...article,
+    tags,
+    isFavorite: favoriteSet.has(article.link),
+    isLiked: likedSet.has(article.link),
+    isDisliked: dislikedSet.has(article.link),
+  };
+};
 
 export const getPaginatedNews = async ({
   tag,
@@ -414,8 +423,19 @@ export const upsertArticleIfMissing = async (payload) => {
 };
 
 export const getAvailableTags = async () => {
-  const tags = await News.distinct("tags");
-  return tags.filter(Boolean).sort((left, right) => left.localeCompare(right));
+  const [storedTags, untaggedArticles] = await Promise.all([
+    News.distinct("tags"),
+    News.find({
+      $or: [{ tags: { $exists: false } }, { tags: { $size: 0 } }],
+    })
+      .select({ title: 1, description: 1, link: 1, category: 1, subCategory: 1 })
+      .lean(),
+  ]);
+
+  const inferredTags = untaggedArticles.flatMap((article) => inferFallbackTags(article));
+  return [...new Set([...storedTags, ...inferredTags])]
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
 };
 
 export const buildIntelligenceOverview = async () => {

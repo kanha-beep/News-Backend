@@ -107,6 +107,56 @@ export const getTags = (item) => {
   return [...new Set(tags)];
 };
 
+export const inferFallbackTags = (item) => {
+  const text = `${item.title || ""} ${item.description || ""}`.toLowerCase();
+  const url = (item.link || "").toLowerCase();
+  const fallbackTags = [];
+
+  const pushTag = (value) => {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    if (
+      normalized &&
+      normalized !== "general" &&
+      normalized !== "news" &&
+      normalized !== "latest-news"
+    ) {
+      fallbackTags.push(normalized);
+    }
+  };
+
+  pushTag(item.category);
+  pushTag(item.subCategory);
+
+  const keywordFallbacks = [
+    { tag: "technology", pattern: /(ai|artificial intelligence|tech|software|startup|semiconductor|chip|app|digital|cyber)/ },
+    { tag: "science", pattern: /(research|scientist|space|nasa|isro|climate|species|physics|chemistry|biology)/ },
+    { tag: "environment", pattern: /(forest|wildlife|climate|rainfall|pollution|river|water|conservation|ecology)/ },
+    { tag: "economy", pattern: /(economy|inflation|gdp|market|stock|trade|rupee|finance|bank|industry)/ },
+    { tag: "urban", pattern: /(city|cities|urban|municipal|metro|infrastructure|civic|housing|public transport|traffic)/ },
+    { tag: "water", pattern: /(water crisis|drinking water|groundwater|sewage|drainage|reservoir|lake|river)/ },
+    { tag: "climate", pattern: /(heat wave|global warming|emissions|carbon|sustainability|green energy|extreme weather)/ },
+    { tag: "agriculture", pattern: /(farmer|farmers|crop|harvest|paddy|monsoon|agriculture|agri)/ },
+    { tag: "sports", pattern: /(cricket|football|hockey|tennis|olympic|match|tournament|fifa|ipl)/ },
+    { tag: "entertainment", pattern: /(film|movie|actor|actress|music|song|cinema|show|festival)/ },
+    { tag: "law", pattern: /(supreme court|high court|tribunal|judgment|verdict|legal|law)/ },
+    { tag: "opinion", pattern: /(analysis|explained|opinion|editorial|column|commentary|five solutions|why|how to)/ },
+    { tag: "travel", pattern: /(tourism|travel|airport|flight|railway|train|destination)/ },
+  ];
+
+  for (const { tag, pattern } of keywordFallbacks) {
+    if (pattern.test(text) || pattern.test(url)) {
+      fallbackTags.push(tag);
+    }
+  }
+
+  return [...new Set(fallbackTags)].slice(0, 6);
+};
+
 export const normalizeFeedItem = (item, feedContext = {}) => {
   const publishedAt = parsePublishedAt(item.pubDate);
   const dateKeys = buildDateKeys(publishedAt);
@@ -140,6 +190,9 @@ export const normalizeFeedItem = (item, feedContext = {}) => {
   };
 
   normalized.tags = getTags(normalized);
+  if (normalized.tags.length === 0) {
+    normalized.tags = inferFallbackTags(normalized);
+  }
   normalized.entities = extractEntities(normalized);
 
   return normalized;
