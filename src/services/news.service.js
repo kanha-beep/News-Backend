@@ -4,9 +4,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import axios from "axios";
 import { parseStringPromise } from "xml2js";
-import { News } from "../../news.model.js";
-import { Comment } from "../../comment.model.js";
-import { User } from "../../user.model.js";
+import { News } from "../model/news.model.js";
+import { Comment } from "../model/comment.model.js";
+import { User } from "../model/user.model.js";
 import { env } from "../config/env.js";
 import { getExternalBlogModel } from "../config/database.js";
 import { notifyUsersAboutMatchingArticles } from "./push.service.js";
@@ -161,12 +161,18 @@ const attachEngagementCounts = async (articles) => {
   }
 
   const articleLinks = [...new Set(articles.map((article) => article.link).filter(Boolean))];
-  const [likeCounts, commentCounts] = await Promise.all([
+  const [likeCounts, dislikeCounts, commentCounts] = await Promise.all([
     User.aggregate([
       { $match: { likedLinks: { $in: articleLinks } } },
       { $unwind: "$likedLinks" },
       { $match: { likedLinks: { $in: articleLinks } } },
       { $group: { _id: "$likedLinks", count: { $sum: 1 } } },
+    ]),
+    User.aggregate([
+      { $match: { dislikedLinks: { $in: articleLinks } } },
+      { $unwind: "$dislikedLinks" },
+      { $match: { dislikedLinks: { $in: articleLinks } } },
+      { $group: { _id: "$dislikedLinks", count: { $sum: 1 } } },
     ]),
     Comment.aggregate([
       { $match: { newsLink: { $in: articleLinks } } },
@@ -175,11 +181,13 @@ const attachEngagementCounts = async (articles) => {
   ]);
 
   const likeCountMap = new Map(likeCounts.map((item) => [item._id, item.count]));
+  const dislikeCountMap = new Map(dislikeCounts.map((item) => [item._id, item.count]));
   const commentCountMap = new Map(commentCounts.map((item) => [item._id, item.count]));
 
   return articles.map((article) => ({
     ...article,
     likeCount: likeCountMap.get(article.link) || 0,
+    dislikeCount: dislikeCountMap.get(article.link) || 0,
     commentCount: commentCountMap.get(article.link) || 0,
   }));
 };
@@ -274,8 +282,15 @@ const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
     query.link = favoriteLinks.length ? { $in: favoriteLinks } : { $in: [] };
   }
 
-  if (tag?.trim()) {
-    query.tags = { $regex: escapeRegex(tag.trim().toLowerCase()), $options: "i" };
+  const normalizedTags = String(tag || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (normalizedTags.length === 1) {
+    query.tags = normalizedTags[0];
+  } else if (normalizedTags.length > 1) {
+    query.tags = { $in: normalizedTags };
   }
 
   if (title?.trim()) {
@@ -291,10 +306,11 @@ const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
   return query;
 };
 
-const decorateArticle = (article, favoriteSet, likedSet) => ({
+const decorateArticle = (article, favoriteSet, likedSet, dislikedSet) => ({
   ...article,
   isFavorite: favoriteSet.has(article.link),
   isLiked: likedSet.has(article.link),
+  isDisliked: dislikedSet.has(article.link),
 });
 
 export const getPaginatedNews = async ({
@@ -306,13 +322,15 @@ export const getPaginatedNews = async ({
   favoriteLinks,
   userFavoriteLinks,
   userLikedLinks,
+  userDislikedLinks,
 }) => {
   const normalizedPage = Math.max(1, Number.parseInt(page, 10) || 1);
-  const limit = 9;
+  const limit = 4;
   const skip = (normalizedPage - 1) * limit;
   const query = buildNewsQuery({ tag, title, date, month, favoriteLinks });
   const favoriteSet = new Set(userFavoriteLinks || []);
   const likedSet = new Set(userLikedLinks || []);
+  const dislikedSet = new Set(userDislikedLinks || []);
 
   const [news, total] = await Promise.all([
     News.find(query)
@@ -332,11 +350,18 @@ export const getPaginatedNews = async ({
     page: normalizedPage,
     limit,
     totalPages: Math.max(1, Math.ceil(total / limit)),
-    items: newsWithEngagement.map((article) => decorateArticle(article, favoriteSet, likedSet)),
+    items: newsWithEngagement.map((article) =>
+      decorateArticle(article, favoriteSet, likedSet, dislikedSet),
+    ),
   };
 };
 
-export const getArticleByLink = async ({ link, userFavoriteLinks, userLikedLinks }) => {
+export const getArticleByLink = async ({
+  link,
+  userFavoriteLinks,
+  userLikedLinks,
+  userDislikedLinks,
+}) => {
   const article = await News.findOne({ link: (link || "").trim() }).lean();
 
   if (!article) {
@@ -350,6 +375,7 @@ export const getArticleByLink = async ({ link, userFavoriteLinks, userLikedLinks
     articleWithEngagement,
     new Set(userFavoriteLinks || []),
     new Set(userLikedLinks || []),
+    new Set(userDislikedLinks || []),
   );
 };
 
@@ -431,13 +457,19 @@ export const getEventTimeline = async (eventId) => {
   return clusters.find((cluster) => cluster.id === eventId) || null;
 };
 
-export const runSemanticSearch = async ({ query, userFavoriteLinks, userLikedLinks }) => {
+export const runSemanticSearch = async ({
+  query,
+  userFavoriteLinks,
+  userLikedLinks,
+  userDislikedLinks,
+}) => {
   const articles = await News.find({})
     .sort({ publishedAt: -1, createdAt: -1 })
     .limit(200)
     .lean();
   const favoriteSet = new Set(userFavoriteLinks || []);
   const likedSet = new Set(userLikedLinks || []);
+  const dislikedSet = new Set(userDislikedLinks || []);
 
   const matchingArticles = articles
     .map((article) => ({
@@ -452,7 +484,9 @@ export const runSemanticSearch = async ({ query, userFavoriteLinks, userLikedLin
   const articlesWithBlogs = await attachMatchingBlogs(matchingArticles);
   const articlesWithEngagement = await attachEngagementCounts(articlesWithBlogs);
 
-  return articlesWithEngagement.map((article) => decorateArticle(article, favoriteSet, likedSet));
+  return articlesWithEngagement.map((article) =>
+    decorateArticle(article, favoriteSet, likedSet, dislikedSet),
+  );
 };
 
 export const warmNewsIntelligence = async () => {

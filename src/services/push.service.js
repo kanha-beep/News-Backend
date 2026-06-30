@@ -1,6 +1,6 @@
 import webpush from "web-push";
-import { PushSubscriptionModel } from "../../push-subscription.model.js";
-import { AlertSubscription } from "../../alert-subscription.model.js";
+import { PushSubscriptionModel } from "../model/push-subscription.model.js";
+import { AlertSubscription } from "../model/alert-subscription.model.js";
 import { env } from "../config/env.js";
 import { badRequest } from "../utils/http.js";
 
@@ -25,6 +25,11 @@ const buildAlertUrl = () => {
   const baseUrl = env.ALLOWED_ORIGINS[0] || env.FRONT_END_URI || "";
   return baseUrl ? `${baseUrl.replace(/\/+$/, "")}/?view=alerts` : "/";
 };
+
+const articleHasMatchingTag = (article, alertTag) =>
+  (article.tags || [])
+    .map((tag) => String(tag || "").trim().toLowerCase())
+    .some((tag) => tag === alertTag);
 
 export const getPushPublicKey = () => env.PUSH_VAPID_PUBLIC_KEY;
 export const isPushEnabled = () => env.PUSH_ENABLED;
@@ -151,8 +156,7 @@ export const notifyUsersAboutMatchingArticles = async (articles) => {
 
   for (const alert of alerts) {
     const matches = articles.filter((article) => {
-      const haystack = `${article.title || ""} ${article.description || ""} ${(article.tags || []).join(" ")}`.toLowerCase();
-      return (alert.keywords || []).every((keyword) => haystack.includes(keyword));
+      return articleHasMatchingTag(article, String(alert.topic || "").toLowerCase());
     });
 
     if (!matches.length) {

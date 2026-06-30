@@ -1,4 +1,4 @@
-import { Comment } from "../../comment.model.js";
+import { Comment } from "../model/comment.model.js";
 import { moderateComment } from "../utils/moderation.js";
 import { readString } from "../utils/validation.js";
 import { badRequest } from "../utils/http.js";

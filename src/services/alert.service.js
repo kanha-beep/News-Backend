@@ -1,15 +1,23 @@
 import mongoose from "mongoose";
-import { AlertSubscription } from "../../alert-subscription.model.js";
-import { News } from "../../news.model.js";
+import { AlertSubscription } from "../model/alert-subscription.model.js";
+import { News } from "../model/news.model.js";
 import { badRequest } from "../utils/http.js";
 import { readOptionalBoolean, readString } from "../utils/validation.js";
+
+const normalizeAlertTag = (value) =>
+  readString(value, "Topic", { required: true, max: 120 }).toLowerCase();
+
+const articleHasMatchingTag = (article, alertTag) =>
+  (article.tags || [])
+    .map((tag) => String(tag || "").trim().toLowerCase())
+    .some((tag) => tag === alertTag);
 
 export const listAlerts = async (userId) =>
   AlertSubscription.find({ user: userId }).sort({ createdAt: -1 }).lean();
 
 export const createAlert = async (payload, userId) => {
   const type = readString(payload?.type, "Alert type", { required: true, max: 40 }).toLowerCase();
-  const topic = readString(payload?.topic, "Topic", { required: true, max: 120 });
+  const topic = normalizeAlertTag(payload?.topic);
 
   if (!["topic", "breaking"].includes(type)) {
     throw badRequest("Alert type must be topic or breaking");
@@ -19,10 +27,7 @@ export const createAlert = async (payload, userId) => {
     user: userId,
     type,
     topic,
-    keywords: topic
-      .toLowerCase()
-      .split(/\s+/)
-      .filter(Boolean),
+    keywords: [topic],
     enabled: true,
   });
 };
@@ -71,8 +76,7 @@ export const checkAlerts = async (userId) => {
   return alerts.map((alert) => {
     const matchedArticles = alert.enabled
       ? recentArticles.filter((article) => {
-          const haystack = `${article.title || ""} ${article.description || ""} ${(article.tags || []).join(" ")}`.toLowerCase();
-          return (alert.keywords || []).every((keyword) => haystack.includes(keyword));
+          return articleHasMatchingTag(article, String(alert.topic || "").toLowerCase());
         })
       : [];
 

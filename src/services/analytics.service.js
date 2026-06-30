@@ -1,4 +1,4 @@
-import { Visit } from "../../visit.model.js";
+import { Visit } from "../model/visit.model.js";
 import { readString } from "../utils/validation.js";
 
 const getClientIp = (req) => {

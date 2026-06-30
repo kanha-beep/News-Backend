@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import { env } from "./env.js";
-import { Blog, getBlogModel } from "../../blog.model.js";
+import { Blog, getBlogModel } from "../model/blog.model.js";
 
 let blogsConnection = null;
 let externalBlogModel = Blog;

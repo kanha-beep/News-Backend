@@ -1,8 +1,26 @@
 import bcrypt from "bcrypt";
-import { User } from "../../user.model.js";
+import { User } from "../model/user.model.js";
 import { createToken } from "../middleware/auth.js";
 import { badRequest } from "../utils/http.js";
 import { readString } from "../utils/validation.js";
+
+const buildFallbackName = (email = "") => {
+  const localPart = String(email).split("@")[0]?.trim();
+  return localPart || "Writer";
+};
+
+export const ensureUserHasName = async (user, preferredName = "") => {
+  if (!user) return user;
+
+  const nextName = readString(preferredName, "Name", { max: 80 }) || user.name || buildFallbackName(user.email);
+
+  if (user.name !== nextName) {
+    user.name = nextName;
+    await user.save();
+  }
+
+  return user;
+};
 
 export const sanitizeUser = (user) => ({
   id: user._id,
@@ -10,10 +28,11 @@ export const sanitizeUser = (user) => ({
   email: user.email,
   favoriteCount: Array.isArray(user.favoriteLinks) ? user.favoriteLinks.length : 0,
   likedCount: Array.isArray(user.likedLinks) ? user.likedLinks.length : 0,
+  dislikedCount: Array.isArray(user.dislikedLinks) ? user.dislikedLinks.length : 0,
 });
 
 export const registerUser = async (payload) => {
-  const name = readString(payload?.name, "Name", { max: 80 });
+  const rawName = readString(payload?.name, "Name", { max: 80 });
   const email = readString(payload?.email, "Email", {
     required: true,
     max: 200,
@@ -29,6 +48,8 @@ export const registerUser = async (payload) => {
   if (existingUser) {
     throw badRequest("User already exists");
   }
+
+  const name = rawName || buildFallbackName(email);
 
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await User.create({
@@ -63,6 +84,8 @@ export const loginUser = async (payload) => {
   if (!passwordMatches) {
     throw badRequest("Invalid credentials");
   }
+
+  await ensureUserHasName(user);
 
   return {
     token: createToken(user),

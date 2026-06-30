@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
-import { User } from "../../user.model.js";
+import { User } from "../model/user.model.js";
 
 const extractToken = (req) => {
   const authHeader = req.headers.authorization || "";

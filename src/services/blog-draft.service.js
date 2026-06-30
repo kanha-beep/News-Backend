@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
-import { BlogDraft } from "../../blog-draft.model.js";
-import { News } from "../../news.model.js";
+import { BlogDraft } from "../model/blog-draft.model.js";
+import { News } from "../model/news.model.js";
 import { badRequest } from "../utils/http.js";
 import { buildNeutralSummary } from "../utils/news-intelligence.js";
 

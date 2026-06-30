@@ -1,48 +1,18 @@
 import { Router } from "express";
+import { addAlert, getAlerts, removeAlert, runAlertCheck, updateAlert } from "../controllers/alert.controller.js";
 import { requireAuth } from "../middleware/auth.js";
-import { checkAlerts, createAlert, deleteAlert, listAlerts, toggleAlert } from "../services/alert.service.js";
 import { asyncHandler } from "../utils/http.js";
 
 export const alertRouter = Router();
 
 alertRouter.use(requireAuth);
 
-alertRouter.get(
-  "/",
-  asyncHandler(async (req, res) => {
-    const items = await listAlerts(req.user._id);
-    res.status(200).json({ items });
-  }),
-);
+alertRouter.get("/", asyncHandler(getAlerts));
 
-alertRouter.post(
-  "/",
-  asyncHandler(async (req, res) => {
-    const item = await createAlert(req.body, req.user._id);
-    res.status(201).json({ item });
-  }),
-);
+alertRouter.post("/", asyncHandler(addAlert));
 
-alertRouter.patch(
-  "/:alertId",
-  asyncHandler(async (req, res) => {
-    const item = await toggleAlert(req.params.alertId, req.body?.enabled, req.user._id);
-    res.status(200).json({ item });
-  }),
-);
+alertRouter.patch("/:alertId", asyncHandler(updateAlert));
 
-alertRouter.delete(
-  "/:alertId",
-  asyncHandler(async (req, res) => {
-    await deleteAlert(req.params.alertId, req.user._id);
-    res.status(200).json({ ok: true });
-  }),
-);
+alertRouter.delete("/:alertId", asyncHandler(removeAlert));
 
-alertRouter.get(
-  "/check",
-  asyncHandler(async (req, res) => {
-    const items = await checkAlerts(req.user._id);
-    res.status(200).json({ items });
-  }),
-);
+alertRouter.get("/check", asyncHandler(runAlertCheck));
