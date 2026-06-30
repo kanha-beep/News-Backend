@@ -4,7 +4,6 @@ import helmet from "helmet";
 import hpp from "hpp";
 import mongoSanitize from "express-mongo-sanitize";
 import { env } from "./config/env.js";
-import { apiLimiter, authLimiter } from "./middleware/rate-limit.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { newsRouter } from "./routes/news.routes.js";
 import { commentRouter } from "./routes/comment.routes.js";
@@ -60,8 +59,6 @@ export const createApp = () => {
   app.use(express.urlencoded({ extended: true, limit: "100kb" }));
   app.use(sanitizeRequest);
   app.use(hpp());
-  app.use("/api", apiLimiter);
-  app.use("/api/auth", authLimiter);
 
   app.get("/api/health", (_req, res) => {
     res.status(200).json({ ok: true });
