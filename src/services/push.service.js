@@ -83,10 +83,10 @@ export const removePushSubscription = async ({ userId, endpoint }) => {
 
 export const sendPushToSubscriptions = async (subscriptions, payload) => {
   if (!env.PUSH_ENABLED || !subscriptions.length) {
-    return;
+    return [];
   }
 
-  await Promise.all(
+  return Promise.all(
     subscriptions.map(async (subscriptionDoc) => {
       try {
         await webpush.sendNotification(
@@ -102,6 +102,11 @@ export const sendPushToSubscriptions = async (subscriptions, payload) => {
           { _id: subscriptionDoc._id },
           { $set: { lastNotifiedAt: new Date(), isActive: true } },
         );
+
+        return {
+          ok: true,
+          endpoint: subscriptionDoc.endpoint,
+        };
       } catch (error) {
         const statusCode = error?.statusCode || error?.status;
         if (statusCode === 404 || statusCode === 410) {
@@ -109,9 +114,19 @@ export const sendPushToSubscriptions = async (subscriptions, payload) => {
             { _id: subscriptionDoc._id },
             { $set: { isActive: false } },
           );
-        } else {
-          console.error("Push notification failed:", error?.message || error);
         }
+
+        const failure = {
+          ok: false,
+          endpoint: subscriptionDoc.endpoint,
+          statusCode,
+          message: error?.message || String(error),
+          body: error?.body || null,
+          headers: error?.headers || null,
+        };
+
+        console.error("Push notification failed:", failure);
+        return failure;
       }
     }),
   );
@@ -132,6 +147,39 @@ export const sendWelcomePushNotification = async (userId) => {
     body: "You will now receive push notifications for new matches on saved alerts.",
     url: buildAlertUrl(),
   });
+};
+
+export const sendTestPushNotification = async (userId) => {
+  if (!env.PUSH_ENABLED) {
+    throw badRequest("Push notifications are not configured on the server");
+  }
+
+  const subscriptions = await listUserPushSubscriptions(userId);
+  if (!subscriptions.length) {
+    throw badRequest("Enable push notifications in this browser first");
+  }
+
+  const results = await sendPushToSubscriptions(subscriptions, {
+    title: "Lightning News test notification",
+    body: "Push delivery is working for this browser.",
+    url: buildAlertUrl(),
+  });
+
+  const successCount = results.filter((item) => item?.ok).length;
+  if (successCount === 0) {
+    const firstFailure = results.find((item) => item && !item.ok);
+    throw badRequest(
+      firstFailure?.statusCode
+        ? `Push delivery failed (${firstFailure.statusCode}). Check server logs for details.`
+        : "Push delivery failed. Check server logs for details.",
+    );
+  }
+
+  return {
+    ok: true,
+    sent: successCount,
+    total: results.length,
+  };
 };
 
 export const notifyUsersAboutMatchingArticles = async (articles) => {

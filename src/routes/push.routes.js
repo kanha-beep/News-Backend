@@ -1,5 +1,11 @@
 import { Router } from "express";
-import { getPublicKey, getSubscriptions, subscribe, unsubscribe } from "../controllers/push.controller.js";
+import {
+  getPublicKey,
+  getSubscriptions,
+  sendTest,
+  subscribe,
+  unsubscribe,
+} from "../controllers/push.controller.js";
 import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -12,3 +18,5 @@ pushRouter.get("/subscriptions", requireAuth, asyncHandler(getSubscriptions));
 pushRouter.post("/subscribe", requireAuth, asyncHandler(subscribe));
 
 pushRouter.post("/unsubscribe", requireAuth, asyncHandler(unsubscribe));
+
+pushRouter.post("/send-test", requireAuth, asyncHandler(sendTest));

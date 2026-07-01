@@ -4,6 +4,7 @@ import {
   listUserPushSubscriptions,
   removePushSubscription,
   savePushSubscription,
+  sendTestPushNotification,
   sendWelcomePushNotification,
 } from "../services/push.service.js";
 import { badRequest } from "../utils/http.js";
@@ -37,4 +38,9 @@ export const unsubscribe = async (req, res) => {
     endpoint: req.body?.endpoint,
   });
   res.status(200).json({ ok: true });
+};
+
+export const sendTest = async (req, res) => {
+  const result = await sendTestPushNotification(req.user._id);
+  res.status(200).json(result);
 };

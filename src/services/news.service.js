@@ -18,6 +18,7 @@ import {
   inferFallbackTags,
   normalizeFeedItem,
   normalizeTitleKey,
+  sanitizeTags,
   scoreSemanticMatch,
 } from "../utils/news-intelligence.js";
 
@@ -308,10 +309,11 @@ const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
 };
 
 const decorateArticle = (article, favoriteSet, likedSet, dislikedSet) => {
-  const tags =
+  const tags = sanitizeTags(
     Array.isArray(article.tags) && article.tags.length > 0
       ? article.tags
-      : inferFallbackTags(article);
+      : inferFallbackTags(article),
+  );
 
   return {
     ...article,
@@ -433,8 +435,7 @@ export const getAvailableTags = async () => {
   ]);
 
   const inferredTags = untaggedArticles.flatMap((article) => inferFallbackTags(article));
-  return [...new Set([...storedTags, ...inferredTags])]
-    .filter(Boolean)
+  return sanitizeTags([...storedTags, ...inferredTags])
     .sort((left, right) => left.localeCompare(right));
 };
 

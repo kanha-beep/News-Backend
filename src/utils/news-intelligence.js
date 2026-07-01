@@ -25,7 +25,29 @@ const STOP_WORDS = new Set([
   "with",
 ]);
 
+const MAX_TAG_LENGTH = 10;
+const EXCLUDED_TAGS = new Set(["photo", "photos"]);
+
 export const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const normalizeTagValue = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+export const sanitizeTags = (values = []) =>
+  [...new Set((Array.isArray(values) ? values : [values]).map(normalizeTagValue))]
+    .filter(
+      (tag) =>
+        tag &&
+        !EXCLUDED_TAGS.has(tag) &&
+        tag.length <= MAX_TAG_LENGTH &&
+        tag !== "general" &&
+        tag !== "news" &&
+        tag !== "latest-news",
+    );
 
 export const normalizeTitleKey = (value = "") =>
   value
@@ -104,7 +126,7 @@ export const getTags = (item) => {
   if (/(ganja|narcotic|drug|contraband|smuggling)/.test(text)) tags.push("drugs");
   if (/(hospital|doctor|health|disease|vaccine)/.test(text)) tags.push("health");
 
-  return [...new Set(tags)];
+  return sanitizeTags(tags);
 };
 
 export const inferFallbackTags = (item) => {
@@ -113,18 +135,9 @@ export const inferFallbackTags = (item) => {
   const fallbackTags = [];
 
   const pushTag = (value) => {
-    const normalized = String(value || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+    const normalized = normalizeTagValue(value);
 
-    if (
-      normalized &&
-      normalized !== "general" &&
-      normalized !== "news" &&
-      normalized !== "latest-news"
-    ) {
+    if (normalized) {
       fallbackTags.push(normalized);
     }
   };
@@ -154,7 +167,7 @@ export const inferFallbackTags = (item) => {
     }
   }
 
-  return [...new Set(fallbackTags)].slice(0, 6);
+  return sanitizeTags(fallbackTags).slice(0, 6);
 };
 
 export const normalizeFeedItem = (item, feedContext = {}) => {
