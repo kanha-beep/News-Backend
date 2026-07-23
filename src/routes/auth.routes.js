@@ -1,5 +1,10 @@
 import { Router } from "express";
-import { getCurrentUser, login, register } from "../controllers/auth.controller.js";
+import {
+  getCurrentUser,
+  login,
+  register,
+  updateLanguagePreference,
+} from "../controllers/auth.controller.js";
 import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -10,3 +15,5 @@ authRouter.post("/register", asyncHandler(register));
 authRouter.post("/login", asyncHandler(login));
 
 authRouter.get("/me", requireAuth, asyncHandler(getCurrentUser));
+
+authRouter.put("/preferences/language", requireAuth, asyncHandler(updateLanguagePreference));

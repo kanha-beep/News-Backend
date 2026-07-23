@@ -6,10 +6,16 @@ import {
   syncNewsFromRss,
   upsertArticleIfMissing,
 } from "../services/news.service.js";
+import { resolvePreferredLanguage } from "../services/translation.service.js";
 import { badRequest } from "../utils/http.js";
 
 export const syncNews = async (req, res) => {
-  const payload = await syncNewsFromRss(req.query.rssUrl || undefined);
+  const payload = await syncNewsFromRss(req.query.rssUrl || undefined, {
+    language: resolvePreferredLanguage({
+      queryLanguage: req.query.language,
+      userLanguage: req.user?.preferredLanguage,
+    }),
+  });
   res.status(200).json(payload);
 };
 
@@ -24,6 +30,10 @@ export const listNews = async (req, res) => {
     userFavoriteLinks: req.user?.favoriteLinks || [],
     userLikedLinks: req.user?.likedLinks || [],
     userDislikedLinks: req.user?.dislikedLinks || [],
+    language: resolvePreferredLanguage({
+      queryLanguage: req.query.language,
+      userLanguage: req.user?.preferredLanguage,
+    }),
   });
   res.status(200).json(payload);
 };
@@ -34,6 +44,10 @@ export const getArticle = async (req, res) => {
     userFavoriteLinks: req.user?.favoriteLinks || [],
     userLikedLinks: req.user?.likedLinks || [],
     userDislikedLinks: req.user?.dislikedLinks || [],
+    language: resolvePreferredLanguage({
+      queryLanguage: req.query.language,
+      userLanguage: req.user?.preferredLanguage,
+    }),
   });
 
   if (!article) {
@@ -54,6 +68,10 @@ export const filterNews = async (req, res) => {
     userFavoriteLinks: req.user?.favoriteLinks || [],
     userLikedLinks: req.user?.likedLinks || [],
     userDislikedLinks: req.user?.dislikedLinks || [],
+    language: resolvePreferredLanguage({
+      queryLanguage: req.body?.language,
+      userLanguage: req.user?.preferredLanguage,
+    }),
   });
   res.status(200).json(payload);
 };

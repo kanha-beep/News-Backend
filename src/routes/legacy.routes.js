@@ -11,7 +11,7 @@ import { asyncHandler } from "../utils/http.js";
 
 export const legacyRouter = Router();
 
-legacyRouter.get("/hindu", asyncHandler(getLegacyHindu));
+legacyRouter.get("/hindu", optionalAuth, asyncHandler(getLegacyHindu));
 
 legacyRouter.get("/tags", asyncHandler(getLegacyTags));
 

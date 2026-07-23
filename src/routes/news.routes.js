@@ -15,7 +15,7 @@ import { asyncHandler } from "../utils/http.js";
 
 export const newsRouter = Router();
 
-newsRouter.get("/sync", asyncHandler(syncNews));
+newsRouter.get("/sync", optionalAuth, asyncHandler(syncNews));
 
 newsRouter.get("/", optionalAuth, asyncHandler(listNews));
 

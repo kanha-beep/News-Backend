@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import { User } from "../model/user.model.js";
 import { createToken } from "../middleware/auth.js";
+import { DEFAULT_LANGUAGE_CODE, SUPPORTED_LANGUAGE_CODES } from "../config/languages.js";
 import { badRequest } from "../utils/http.js";
 import { readString } from "../utils/validation.js";
 
@@ -26,10 +27,29 @@ export const sanitizeUser = (user) => ({
   id: user._id,
   name: user.name,
   email: user.email,
+  preferredLanguage: user.preferredLanguage || DEFAULT_LANGUAGE_CODE,
   favoriteCount: Array.isArray(user.favoriteLinks) ? user.favoriteLinks.length : 0,
   likedCount: Array.isArray(user.likedLinks) ? user.likedLinks.length : 0,
   dislikedCount: Array.isArray(user.dislikedLinks) ? user.dislikedLinks.length : 0,
 });
+
+export const updateUserLanguagePreference = async (user, language) => {
+  const normalizedLanguage = readString(language, "Language", {
+    required: true,
+    max: 20,
+  });
+
+  if (!SUPPORTED_LANGUAGE_CODES.has(normalizedLanguage)) {
+    throw badRequest("Language is not supported");
+  }
+
+  if (user.preferredLanguage !== normalizedLanguage) {
+    user.preferredLanguage = normalizedLanguage;
+    await user.save();
+  }
+
+  return sanitizeUser(user);
+};
 
 export const registerUser = async (payload) => {
   const rawName = readString(payload?.name, "Name", { max: 80 });

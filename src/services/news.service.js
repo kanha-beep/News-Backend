@@ -21,6 +21,11 @@ import {
   sanitizeTags,
   scoreSemanticMatch,
 } from "../utils/news-intelligence.js";
+import {
+  buildTranslationSummary,
+  translateArticleIfNeeded,
+  translateArticlesIfNeeded,
+} from "./translation.service.js";
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -194,9 +199,16 @@ const attachEngagementCounts = async (articles) => {
   }));
 };
 
-export const syncNewsFromRss = async (rssUrl = env.HINDU_HOME_RSS) => {
+export const syncNewsFromRss = async (rssUrl = env.HINDU_HOME_RSS, options = {}) => {
+  const { language = "en" } = options;
   if (feedCache.data && Date.now() - feedCache.ts < CACHE_TTL_MS && rssUrl === env.HINDU_HOME_RSS) {
-    return feedCache.data;
+    const translatedItems = await translateArticlesIfNeeded(feedCache.data.items, language);
+    return {
+      ...feedCache.data,
+      items: translatedItems,
+      language,
+      translation: buildTranslationSummary(translatedItems, language),
+    };
   }
 
   let fetchedFeed;
@@ -257,7 +269,7 @@ export const syncNewsFromRss = async (rssUrl = env.HINDU_HOME_RSS) => {
     );
   }
 
-  const payload = {
+  const basePayload = {
     source: channel.title || "RSS Feed",
     title: channel.title,
     link: channel.link,
@@ -267,14 +279,21 @@ export const syncNewsFromRss = async (rssUrl = env.HINDU_HOME_RSS) => {
   };
 
   if (rssUrl === env.HINDU_HOME_RSS) {
-    feedCache = { data: payload, ts: Date.now() };
+    feedCache = { data: basePayload, ts: Date.now() };
   }
 
   if (newArticles.length) {
     await notifyUsersAboutMatchingArticles(newArticles);
   }
 
-  return payload;
+  const translatedItems = await translateArticlesIfNeeded(basePayload.items, language);
+
+  return {
+    ...basePayload,
+    items: translatedItems,
+    language,
+    translation: buildTranslationSummary(translatedItems, language),
+  };
 };
 
 const buildNewsQuery = ({ tag, title, date, month, favoriteLinks }) => {
@@ -334,6 +353,7 @@ export const getPaginatedNews = async ({
   userFavoriteLinks,
   userLikedLinks,
   userDislikedLinks,
+  language = "en",
 }) => {
   const normalizedPage = Math.max(1, Number.parseInt(page, 10) || 1);
   const limit = 4;
@@ -355,15 +375,22 @@ export const getPaginatedNews = async ({
   const newsWithBlogs = await attachMatchingBlogs(news);
   const newsWithEngagement = await attachEngagementCounts(newsWithBlogs);
 
+  const translatedItems = await translateArticlesIfNeeded(
+    newsWithEngagement.map((article) =>
+      decorateArticle(article, favoriteSet, likedSet, dislikedSet),
+    ),
+    language,
+  );
+
   return {
     count: news.length,
     total,
     page: normalizedPage,
     limit,
     totalPages: Math.max(1, Math.ceil(total / limit)),
-    items: newsWithEngagement.map((article) =>
-      decorateArticle(article, favoriteSet, likedSet, dislikedSet),
-    ),
+    items: translatedItems,
+    language,
+    translation: buildTranslationSummary(translatedItems, language),
   };
 };
 
@@ -372,6 +399,7 @@ export const getArticleByLink = async ({
   userFavoriteLinks,
   userLikedLinks,
   userDislikedLinks,
+  language = "en",
 }) => {
   const article = await News.findOne({ link: (link || "").trim() }).lean();
 
@@ -382,11 +410,14 @@ export const getArticleByLink = async ({
   const [articleWithBlog] = await attachMatchingBlogs([article]);
   const [articleWithEngagement] = await attachEngagementCounts([articleWithBlog]);
 
-  return decorateArticle(
-    articleWithEngagement,
-    new Set(userFavoriteLinks || []),
-    new Set(userLikedLinks || []),
-    new Set(userDislikedLinks || []),
+  return translateArticleIfNeeded(
+    decorateArticle(
+      articleWithEngagement,
+      new Set(userFavoriteLinks || []),
+      new Set(userLikedLinks || []),
+      new Set(userDislikedLinks || []),
+    ),
+    language,
   );
 };
 

@@ -1,9 +1,15 @@
 import { sanitizeUser } from "../services/auth.service.js";
 import { getAvailableTags, syncNewsFromRss, upsertArticleIfMissing } from "../services/news.service.js";
+import { resolvePreferredLanguage } from "../services/translation.service.js";
 import { badRequest } from "../utils/http.js";
 
 export const getLegacyHindu = async (req, res) => {
-  const payload = await syncNewsFromRss(req.query.rssUrl || undefined);
+  const payload = await syncNewsFromRss(req.query.rssUrl || undefined, {
+    language: resolvePreferredLanguage({
+      queryLanguage: req.query.language,
+      userLanguage: req.user?.preferredLanguage,
+    }),
+  });
   res.status(200).json(payload);
 };
 
