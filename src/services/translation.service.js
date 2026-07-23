@@ -8,6 +8,7 @@ import {
 } from "../config/languages.js";
 
 const TRANSLATION_BATCH_SIZE = 1;
+const UI_TRANSLATION_CACHE = new Map();
 
 const buildTranslatableArticle = (article) => ({
   title: article?.title || "",
@@ -67,6 +68,28 @@ const requestTranslatedBatch = async (articles, language) => {
   return articles.map((article, index) =>
     mergeTranslatedArticle(article, translatedItems[index] || {}, language),
   );
+};
+
+const requestTranslatedTexts = async (texts, language) => {
+  const response = await axios.post(
+    `${env.TRANSLATION_SERVICE_URL}/translate/texts`,
+    {
+      source_language: "english",
+      target_language: LANGUAGE_TARGET_BY_CODE.get(language) || language,
+      texts,
+    },
+    {
+      timeout: env.TRANSLATION_SERVICE_TIMEOUT_MS,
+      headers: {
+        "Content-Type": "application/json",
+        ...(env.TRANSLATION_SERVICE_API_KEY
+          ? { "x-api-key": env.TRANSLATION_SERVICE_API_KEY }
+          : {}),
+      },
+    },
+  );
+
+  return Array.isArray(response.data?.texts) ? response.data.texts : [];
 };
 
 export const resolvePreferredLanguage = ({ queryLanguage, userLanguage }) => {
@@ -142,4 +165,48 @@ export const buildTranslationSummary = (articles, requestedLanguage) => {
     active: requestedLanguage !== DEFAULT_LANGUAGE_CODE && translatedCount > 0,
     fallbackToEnglish: requestedLanguage !== DEFAULT_LANGUAGE_CODE && skippedCount > 0,
   };
+};
+
+const UI_LABELS = {
+  readArticle: "Read article",
+  writeOpinion: "Write opinion",
+  readBlog: "Read blog",
+  shareArticle: "Share article",
+  real: "Real",
+  manipulative: "Manipulative",
+  comment: "Comment",
+};
+
+export const getUiTranslations = async (language) => {
+  if (
+    language === DEFAULT_LANGUAGE_CODE ||
+    !SUPPORTED_LANGUAGE_CODES.has(language) ||
+    !GOOGLE_SUPPORTED_LANGUAGE_CODES.has(language) ||
+    !env.TRANSLATION_SERVICE_URL
+  ) {
+    return { ...UI_LABELS, language: DEFAULT_LANGUAGE_CODE };
+  }
+
+  const cacheKey = language;
+  if (UI_TRANSLATION_CACHE.has(cacheKey)) {
+    return UI_TRANSLATION_CACHE.get(cacheKey);
+  }
+
+  try {
+    const keys = Object.keys(UI_LABELS);
+    const translatedTexts = await requestTranslatedTexts(Object.values(UI_LABELS), language);
+    const labels = keys.reduce((accumulator, key, index) => {
+      accumulator[key] = translatedTexts[index] || UI_LABELS[key];
+      return accumulator;
+    }, {});
+    const payload = { ...labels, language };
+    UI_TRANSLATION_CACHE.set(cacheKey, payload);
+    return payload;
+  } catch (error) {
+    console.warn(
+      "UI translation failed, returning English labels:",
+      error?.message || error,
+    );
+    return { ...UI_LABELS, language: DEFAULT_LANGUAGE_CODE };
+  }
 };
