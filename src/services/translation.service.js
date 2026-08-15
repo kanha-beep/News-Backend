@@ -44,6 +44,13 @@ const buildSkippedArticle = (article) => ({
   translationSkipped: true,
 });
 
+const getTranslationErrorDetails = (error) => ({
+  message: error?.message || "Unknown translation error",
+  status: error?.response?.status || null,
+  detail: error?.response?.data?.detail || error?.response?.data?.message || null,
+  url: error?.config?.url || null,
+});
+
 const requestTranslatedBatch = async (articles, language) => {
   const response = await axios.post(
     `${env.TRANSLATION_SERVICE_URL}/translate/articles`,
@@ -130,9 +137,10 @@ export const translateArticlesIfNeeded = async (articles, language) => {
       try {
         return await requestTranslatedBatch(batch, language);
       } catch (error) {
+        const details = getTranslationErrorDetails(error);
         console.warn(
           "Translation batch failed, returning English for that batch:",
-          error?.message || error,
+          details,
         );
         return batch.map(buildSkippedArticle);
       }
@@ -203,9 +211,10 @@ export const getUiTranslations = async (language) => {
     UI_TRANSLATION_CACHE.set(cacheKey, payload);
     return payload;
   } catch (error) {
+    const details = getTranslationErrorDetails(error);
     console.warn(
       "UI translation failed, returning English labels:",
-      error?.message || error,
+      details,
     );
     return { ...UI_LABELS, language: DEFAULT_LANGUAGE_CODE };
   }
