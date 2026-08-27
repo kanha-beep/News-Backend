@@ -37,20 +37,21 @@ const sanitizeRequest = (req, _res, next) => {
 
 export const createApp = () => {
   const app = express();
-
-  app.disable("x-powered-by");
+  console.log("1. cors atrt")
   app.use(
     cors({
       origin(origin, callback) {
         if (!origin || env.ALLOWED_ORIGINS.length === 0 || env.ALLOWED_ORIGINS.includes(origin)) {
+          console.log("2.")
           return callback(null, true);
         }
-
+        console.log("3. ")
         return callback(new Error("Origin not allowed by CORS"));
       },
       credentials: true,
     }),
   );
+  console.log("5.")
   app.use(
     helmet({
       crossOriginResourcePolicy: false,
