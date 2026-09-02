@@ -8,6 +8,7 @@ import { News } from "../model/news.model.js";
 import { Comment } from "../model/comment.model.js";
 import { User } from "../model/user.model.js";
 import { env } from "../config/env.js";
+import { deleteCachedKey, getCachedJson, setCachedJson } from "../config/redis.js";
 import { getExternalBlogModel } from "../config/database.js";
 import { notifyUsersAboutMatchingArticles } from "./push.service.js";
 import {
@@ -32,6 +33,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rustRssFetcherManifestPath = join(__dirname, "..", "..", "rss-fetcher", "Cargo.toml");
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const FEED_CACHE_KEY = "news:feed";
+const FEED_CACHE_TTL_SECONDS = CACHE_TTL_MS / 1000;
 
 let feedCache = { data: null, ts: 0 };
 
@@ -201,10 +204,16 @@ const attachEngagementCounts = async (articles) => {
 
 export const syncNewsFromRss = async (rssUrl = env.HINDU_HOME_RSS, options = {}) => {
   const { language = "en" } = options;
-  if (feedCache.data && Date.now() - feedCache.ts < CACHE_TTL_MS && rssUrl === env.HINDU_HOME_RSS) {
-    const translatedItems = await translateArticlesIfNeeded(feedCache.data.items, language);
+  const canUseFeedCache = rssUrl === env.HINDU_HOME_RSS;
+  const redisCachedFeed = canUseFeedCache ? await getCachedJson(FEED_CACHE_KEY) : null;
+  const memoryCachedFeed =
+    feedCache.data && Date.now() - feedCache.ts < CACHE_TTL_MS ? feedCache.data : null;
+  const cachedFeed = redisCachedFeed || (canUseFeedCache ? memoryCachedFeed : null);
+
+  if (cachedFeed) {
+    const translatedItems = await translateArticlesIfNeeded(cachedFeed.items, language);
     return {
-      ...feedCache.data,
+      ...cachedFeed,
       items: translatedItems,
       language,
       translation: buildTranslationSummary(translatedItems, language),
@@ -280,6 +289,7 @@ export const syncNewsFromRss = async (rssUrl = env.HINDU_HOME_RSS, options = {})
 
   if (rssUrl === env.HINDU_HOME_RSS) {
     feedCache = { data: basePayload, ts: Date.now() };
+    await setCachedJson(FEED_CACHE_KEY, basePayload, FEED_CACHE_TTL_SECONDS);
   }
 
   if (newArticles.length) {
@@ -451,6 +461,7 @@ export const upsertArticleIfMissing = async (payload) => {
     ...dateKeys,
   });
   feedCache = { data: null, ts: 0 };
+  await deleteCachedKey(FEED_CACHE_KEY);
 
   return article;
 };

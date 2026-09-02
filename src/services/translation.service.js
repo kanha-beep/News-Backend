@@ -1,5 +1,6 @@
 import axios from "axios";
 import { env } from "../config/env.js";
+import { getCachedJson, setCachedJson } from "../config/redis.js";
 import {
   DEFAULT_LANGUAGE_CODE,
   GOOGLE_SUPPORTED_LANGUAGE_CODES,
@@ -8,6 +9,7 @@ import {
 } from "../config/languages.js";
 
 const TRANSLATION_BATCH_SIZE = 1;
+const UI_TRANSLATION_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const UI_TRANSLATION_CACHE = new Map();
 
 const buildTranslatableArticle = (article) => ({
@@ -195,7 +197,12 @@ export const getUiTranslations = async (language) => {
     return { ...UI_LABELS, language: DEFAULT_LANGUAGE_CODE };
   }
 
-  const cacheKey = language;
+  const cacheKey = `translations:ui:${language}`;
+  const redisCachedLabels = await getCachedJson(cacheKey);
+  if (redisCachedLabels) {
+    return redisCachedLabels;
+  }
+
   if (UI_TRANSLATION_CACHE.has(cacheKey)) {
     return UI_TRANSLATION_CACHE.get(cacheKey);
   }
@@ -209,6 +216,7 @@ export const getUiTranslations = async (language) => {
     }, {});
     const payload = { ...labels, language };
     UI_TRANSLATION_CACHE.set(cacheKey, payload);
+    await setCachedJson(cacheKey, payload, UI_TRANSLATION_CACHE_TTL_SECONDS);
     return payload;
   } catch (error) {
     const details = getTranslationErrorDetails(error);
