@@ -6,8 +6,21 @@ import {
   syncNewsFromRss,
   upsertArticleIfMissing,
 } from "../services/news.service.js";
+import { setPersistentUserData } from "../services/redis-app-data.service.js";
 import { resolvePreferredLanguage } from "../services/translation.service.js";
 import { badRequest } from "../utils/http.js";
+
+const saveNewsAppData = async (userId, key, value) => {
+  if (!userId) {
+    return;
+  }
+
+  try {
+    await setPersistentUserData(userId, key, value);
+  } catch (error) {
+    console.warn(`Unable to persist ${key} in Redis:`, error?.message || error);
+  }
+};
 
 export const syncNews = async (req, res) => {
   const payload = await syncNewsFromRss(req.query.rssUrl || undefined, {
@@ -35,6 +48,13 @@ export const listNews = async (req, res) => {
       userLanguage: req.user?.preferredLanguage,
     }),
   });
+  await saveNewsAppData(req.user?._id, "news-feed-state", {
+    tag: req.query.tag || "",
+    title: req.query.title || "",
+    date: req.query.date || "",
+    month: req.query.month || "",
+    page: payload.page,
+  });
   res.status(200).json(payload);
 };
 
@@ -54,6 +74,10 @@ export const getArticle = async (req, res) => {
     throw badRequest("Article not found");
   }
 
+  await saveNewsAppData(req.user?._id, "last-viewed-article", {
+    link: article.link,
+    viewedAt: new Date().toISOString(),
+  });
   res.status(200).json({ item: article });
 };
 
@@ -72,6 +96,13 @@ export const filterNews = async (req, res) => {
       queryLanguage: req.body?.language,
       userLanguage: req.user?.preferredLanguage,
     }),
+  });
+  await saveNewsAppData(req.user?._id, "news-feed-state", {
+    tag: req.body?.tag || "",
+    title: req.body?.title || "",
+    date: req.body?.date || "",
+    month: req.body?.month || "",
+    page: payload.page,
   });
   res.status(200).json(payload);
 };

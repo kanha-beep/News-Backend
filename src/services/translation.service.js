@@ -27,7 +27,8 @@ const mergeTranslatedArticle = (article, translated = {}, language) => ({
   category: translated.category || article.category,
   subCategory: translated.subCategory || article.subCategory,
   tags: Array.isArray(translated.tags) && translated.tags.length ? translated.tags : article.tags,
-  translatedLanguage: language,
+  translatedLanguage: translated.translationSkipped ? DEFAULT_LANGUAGE_CODE : language,
+  translationSkipped: Boolean(translated.translationSkipped),
 });
 
 const chunkItems = (items, size) => {
@@ -57,7 +58,7 @@ const requestTranslatedBatch = async (articles, language) => {
   const response = await axios.post(
     `${env.TRANSLATION_SERVICE_URL}/translate/articles`,
     {
-      source_language: "english",
+      source_language: "en",
       target_language: LANGUAGE_TARGET_BY_CODE.get(language) || language,
       items: articles.map(buildTranslatableArticle),
     },
@@ -83,7 +84,7 @@ const requestTranslatedTexts = async (texts, language) => {
   const response = await axios.post(
     `${env.TRANSLATION_SERVICE_URL}/translate/texts`,
     {
-      source_language: "english",
+      source_language: "en",
       target_language: LANGUAGE_TARGET_BY_CODE.get(language) || language,
       texts,
     },

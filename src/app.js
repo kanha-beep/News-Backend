@@ -14,6 +14,8 @@ import { blogDraftRouter } from "./routes/blog-draft.routes.js";
 import { legacyRouter } from "./routes/legacy.routes.js";
 import { pushRouter } from "./routes/push.routes.js";
 import { translationRouter } from "./routes/translation.routes.js";
+import { redisAppDataRouter } from "./routes/redis-app-data.routes.js";
+import { redisQueueRouter } from "./routes/redis-queue.routes.js";
 import { notFoundHandler } from "./middleware/not-found.js";
 import { errorHandler } from "./middleware/error.js";
 
@@ -75,6 +77,8 @@ export const createApp = () => {
   app.use("/api/blog-drafts", blogDraftRouter);
   app.use("/api/push", pushRouter);
   app.use("/api/translations", translationRouter);
+  app.use("/api/redis-data", redisAppDataRouter);
+  app.use("/api/redis-queue", redisQueueRouter);
   app.use("/api", legacyRouter);
 
   app.use(notFoundHandler);
