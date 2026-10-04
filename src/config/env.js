@@ -22,6 +22,7 @@ export const env = {
   PORT: Number.parseInt(process.env.PORT, 10),
   MONGO_URI: process.env.MONGO_URI.trim(),
   JWT_SECRET: process.env.JWT_SECRET.trim(),
+  GOOGLE_CLIENT_ID: (process.env.GOOGLE_CLIENT_ID || "").trim(),
   REDIS_URL: (process.env.REDIS_URL || "redis://127.0.0.1:6379").trim(),
   REDIS_CONNECT_TIMEOUT_MS: Number.parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS || "1000", 10),
   FRONT_END_URI: (process.env.FRONT_END_URI || "").trim(),
