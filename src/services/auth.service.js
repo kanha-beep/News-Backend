@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import axios from "axios";
+import { env } from "../config/env.js";
 import { User } from "../model/user.model.js";
 import { createToken } from "../middleware/auth.js";
 import { DEFAULT_LANGUAGE_CODE, SUPPORTED_LANGUAGE_CODES } from "../config/languages.js";
