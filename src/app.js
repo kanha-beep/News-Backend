@@ -57,6 +57,9 @@ export const createApp = () => {
   app.use(
     helmet({
       crossOriginResourcePolicy: false,
+      // Google Identity needs the account-selection popup to communicate
+      // with the page that started sign-in.
+      crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
     }),
   );
   app.use(express.json({ limit: "100kb" }));
